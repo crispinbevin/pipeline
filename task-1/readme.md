@@ -17,5 +17,10 @@ venv\Scripts\activate   # On Windows
 # Install dependencies
 pip install -r requirements.txt
 
+#Create folder to place documents
+mkdir docs
+
 # Run the script
 python doc_extract_preprocess.py
+
+#Output files will be in processed_docs.jsonl and tables folder 
