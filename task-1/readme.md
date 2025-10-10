@@ -7,7 +7,7 @@
 git clone https://github.com/<your-username>/<your-repo>.git
 
 # Navigate to the project directory
-cd pipeline
+cd pipeline/task-1
 
 # Create and activate a virtual environment (optional but recommended)
 python -m venv venv
