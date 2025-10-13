@@ -7,7 +7,7 @@
 git clone https://github.com/<your-username>/<your-repo>.git
 
 # Navigate to the project directory
-cd pipeline
+cd pipeline/task-1
 
 # Create and activate a virtual environment (optional but recommended)
 python -m venv venv
@@ -17,5 +17,10 @@ venv\Scripts\activate   # On Windows
 # Install dependencies
 pip install -r requirements.txt
 
+#Create folder to place documents
+mkdir docs
+
 # Run the script
 python doc_extract_preprocess.py
+
+#Output files will be in processed_docs.jsonl and tables folder 
