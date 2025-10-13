@@ -23,9 +23,6 @@ def clean_text(text):
 
 # chunked PDF text processor
 def process_pdf_in_chunks(directory_path, chunk_size=10):
-    """Processes PDFs page-by-page to avoid memory overflow.
-    chunk_size = number of pages to load/process at once.
-    """
     output_file = "processed_docs.jsonl"
     all_results = []
 
@@ -74,11 +71,6 @@ def process_pdf_in_chunks(directory_path, chunk_size=10):
 
 # table extraction with chunking
 def extract_tables_from_pdf(directory_path, output_dir="./tables", chunk_size=10):
-    """Extracts tables from all PDFs in a directory using PyMuPDF with chunked processing.
-    chunk_size = number of pages to load/process at once.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-
     for filename in os.listdir(directory_path):
         if not filename.endswith(".pdf"):
             continue
