@@ -58,8 +58,6 @@ def process_pdf_in_chunks(directory_path, chunk_size=10):
                         f.write(json.dumps(page_data, ensure_ascii=False) + "\n")
                         all_results.append(page_data)
 
-                    # explicitly free chunk
-                    doc._free_page(page)
                 
                 doc.close()
 
@@ -71,6 +69,7 @@ def process_pdf_in_chunks(directory_path, chunk_size=10):
 
 # table extraction with chunking
 def extract_tables_from_pdf(directory_path, output_dir="./tables", chunk_size=10):
+    os.makedirs(output_dir, exist_ok=True)
     for filename in os.listdir(directory_path):
         if not filename.endswith(".pdf"):
             continue
@@ -99,9 +98,6 @@ def extract_tables_from_pdf(directory_path, output_dir="./tables", chunk_size=10
                                 csv_path = os.path.join(output_dir, csv_filename)
                                 df.to_csv(csv_path, index=False, encoding="utf-8")
                                 table_count += 1
-                        
-                        # explicitly free page after processing
-                        doc._free_page(page)
                     
                     except Exception as e:
                         logging.error(f"Failed to extract tables from {filename} page {page_num+1}: {str(e)}")
