@@ -9,7 +9,7 @@ import logging
 
 # logging functionality
 logging.basicConfig(
-    filename='processing_errors.log',
+    filename='pre-processing_errors.log',
     level=logging.ERROR,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
@@ -23,7 +23,7 @@ def clean_text(text):
 
 # chunked PDF text processor
 def process_pdf_in_chunks(directory_path, chunk_size=10):
-    output_file = "processed_docs.jsonl"
+    output_file = "pre-processed_docs.jsonl"
     all_results = []
 
     with open(output_file, "w", encoding="utf-8") as f:
@@ -68,7 +68,7 @@ def process_pdf_in_chunks(directory_path, chunk_size=10):
     return all_results
 
 # table extraction with chunking
-def extract_tables_from_pdf(directory_path, output_dir="./tables", chunk_size=10):
+def extract_tables_from_pdf(directory_path, output_dir="./output-tables", chunk_size=10):
     os.makedirs(output_dir, exist_ok=True)
     for filename in os.listdir(directory_path):
         if not filename.endswith(".pdf"):
@@ -117,7 +117,7 @@ def extract_tables_from_pdf(directory_path, output_dir="./tables", chunk_size=10
 
 # example usage
 if __name__ == "__main__":
-    pdf_directory = "./docs"
+    pdf_directory = "./input-docs"
     results = process_pdf_in_chunks(pdf_directory, chunk_size=10)
     extract_tables_from_pdf(pdf_directory, chunk_size=10)
     print(f"Processed {len(results)} pages in total.")
