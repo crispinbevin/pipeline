@@ -11,7 +11,7 @@ nltk.download("punkt_tab")
 from nltk.tokenize import sent_tokenize
 
 # -------- CONFIGURATION --------
-TEXT_FILE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../processed_docs.jsonl"))
+TEXT_FILE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../pre-processed-docs.jsonl"))
 TABLES_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../tables"))
 OUTPUT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../chunked-docs"))
 MAX_TOKENS = 300  # Approximate max words per chunk
