@@ -27,4 +27,5 @@ tables/
 
 *.pdf
 *.jsonl
+*.json
 *.csv
