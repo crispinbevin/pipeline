@@ -17,10 +17,17 @@ venv\Scripts\activate   # On Windows
 # Install dependencies
 pip install -r requirements.txt
 
-#Create folder to place documents
+#Create folder to place documents OR place documents in the same directory and parse it by speicifying in command line
 mkdir docs
 
-# Run the script
-python doc_extract_preprocess.py
 
-#Output files will be in processed_docs.jsonl and tables folder 
+
+# Run the script
+# Process a single file
+python script.py ./path/to/document.pdf
+
+# Process all PDFs in a directory
+python script.py ./path/to/pdfs
+
+# Default to "./input-docs" if nothing provided
+python script.py

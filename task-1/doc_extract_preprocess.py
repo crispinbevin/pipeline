@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import json
 import pandas as pd
 import fitz  # PyMuPDF
@@ -117,7 +118,85 @@ def extract_tables_from_pdf(directory_path, output_dir="../output-tables", chunk
 
 # example usage
 if __name__ == "__main__":
-    pdf_directory = "./input-docs"
-    results = process_pdf_in_chunks(pdf_directory, chunk_size=10)
-    extract_tables_from_pdf(pdf_directory, chunk_size=10)
+    # use command line argument if provided, otherwise default to "./input-docs"
+    path = sys.argv[1] if len(sys.argv) > 1 else "./input-docs"
+    
+    # check if path is a file or directory
+    if os.path.isfile(path):
+        # if it's a file, process just that file in a temporary directory context
+        pdf_directory = os.path.dirname(path) or "."
+        filename = os.path.basename(path)
+        
+        # process only this file
+        output_file = "./pre-processed-docs.jsonl"
+        results = []
+        
+        if filename.endswith(".pdf"):
+            print(f"Processing (chunked): {filename}")
+            try:
+                doc = fitz.open(path)
+                total_pages = len(doc)
+                
+                with open(output_file, "w", encoding="utf-8") as f:
+                    for page_num in range(total_pages):
+                        page = doc.load_page(page_num)
+                        text = page.get_text("text")
+                        clean = clean_text(text)
+                        
+                        page_data = {
+                            "text": clean,
+                            "metadata": {
+                                "filename": filename,
+                                "page_number": page_num + 1,
+                                "character_count": len(clean)
+                            }
+                        }
+                        f.write(json.dumps(page_data, ensure_ascii=False) + "\n")
+                        results.append(page_data)
+                
+                doc.close()
+                
+                # extract tables
+                print(f"Extracting tables (PyMuPDF only): {filename}")
+                doc = fitz.open(path)
+                table_count = 0
+                output_dir = "../output-tables"
+                os.makedirs(output_dir, exist_ok=True)
+                
+                for page_num in range(len(doc)):
+                    try:
+                        page = doc.load_page(page_num)
+                        tables = page.find_tables()
+                        
+                        if tables.tables:
+                            for idx, table in enumerate(tables.tables, start=1):
+                                df = pd.DataFrame(table.extract())
+                                csv_filename = f"{os.path.splitext(filename)[0]}_page{page_num+1}_table{idx}.csv"
+                                csv_path = os.path.join(output_dir, csv_filename)
+                                df.to_csv(csv_path, index=False, encoding="utf-8")
+                                table_count += 1
+                    except Exception as e:
+                        logging.error(f"Failed to extract tables from {filename} page {page_num+1}: {str(e)}")
+                        continue
+                
+                doc.close()
+                
+                if table_count == 0:
+                    print(f"No tables found in {filename}")
+                else:
+                    print(f"Extracted {table_count} tables from {filename}")
+                    
+            except Exception as e:
+                logging.error(f"Failed to process {filename}: {str(e)}")
+        else:
+            print(f"Error: {filename} is not a PDF file")
+    
+    elif os.path.isdir(path):
+        # if it's a directory, process all PDFs in it
+        results = process_pdf_in_chunks(path, chunk_size=10)
+        extract_tables_from_pdf(path, chunk_size=10)
+    else:
+        print(f"Error: {path} is neither a file nor a directory")
+        sys.exit(1)
+    
     print(f"Processed {len(results)} pages in total.")

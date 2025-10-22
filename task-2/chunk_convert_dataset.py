@@ -53,7 +53,7 @@ def process_text_docs():
     data = load_jsonl(TEXT_FILE_PATH)
     chunks = []
 
-    print(f"📘 Processing text file: {TEXT_FILE_PATH}")
+    print(f"Processing text file: {TEXT_FILE_PATH}")
     for entry in tqdm(data):
         text = clean_text(entry["text"])
         file_name = entry["metadata"].get("file_name", "unknown")
@@ -76,21 +76,21 @@ def process_table_csvs():
     """Load and process each CSV table row-wise."""
     table_chunks = []
     if not os.path.exists(TABLES_DIR):
-        print(f"⚠️ Tables directory not found: {TABLES_DIR}")
+        print(f"Tables directory not found: {TABLES_DIR}")
         return table_chunks
 
     csv_files = [f for f in os.listdir(TABLES_DIR) if f.endswith(".csv")]
     if not csv_files:
-        print("⚠️ No CSV tables found.")
+        print("No CSV tables found.")
         return table_chunks
 
-    print(f"📊 Processing tables from: {TABLES_DIR}")
+    print(f"Processing tables from: {TABLES_DIR}")
     for csv_file in tqdm(csv_files):
         csv_path = os.path.join(TABLES_DIR, csv_file)
         try:
             df = pd.read_csv(csv_path)
         except Exception as e:
-            print(f"❌ Failed to read {csv_file}: {e}")
+            print(f"Failed to read {csv_file}: {e}")
             continue
 
         for i, row in df.iterrows():
@@ -115,7 +115,7 @@ def validate_chunks(chunks):
     valid = [c for c in chunks if c.get("chunk_text", "").strip()]
     dropped = len(chunks) - len(valid)
     if dropped:
-        print(f"⚠️ Dropped {dropped} empty chunks.")
+        print(f"Dropped {dropped} empty chunks.")
     return valid
 
 
@@ -136,7 +136,7 @@ def write_csv(chunks, output_path):
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    print("🚀 Starting semantic + table chunking pipeline...")
+    print(" Starting semantic + table chunking pipeline...")
     text_chunks = process_text_docs()
     table_chunks = process_table_csvs()
 
@@ -149,12 +149,12 @@ def main():
     write_jsonl(all_chunks, jsonl_path)
     write_csv(all_chunks, csv_path)
 
-    print(f"\n✅ Chunking complete. {len(all_chunks)} total chunks saved to:")
+    print(f"\n Chunking complete. {len(all_chunks)} total chunks saved to:")
     print(f"   JSONL: {jsonl_path}")
     print(f"   CSV:   {csv_path}")
 
     if PREVIEW_COUNT > 0:
-        print("\n🔍 Preview of combined chunks:")
+        print("\nPreview of combined chunks:")
         for i, chunk in enumerate(all_chunks[:PREVIEW_COUNT]):
             print(f"--- Chunk {i+1} ---")
             print(f"Type: {chunk['source_type']} | File: {chunk['source_file']} | Index: {chunk['chunk_index']}")

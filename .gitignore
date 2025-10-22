@@ -28,5 +28,3 @@ tables/
 *.pdf
 *.jsonl
 *.csv
-
-test.ipynb
