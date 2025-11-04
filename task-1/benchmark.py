@@ -50,12 +50,17 @@ class ExtractionMetrics:
 
 class PDFTableBenchmark:
     def __init__(self, output_dir="./benchmark-results"):
+        # Initializes the benchmark class.
+        # Inputs: output_dir (str) - directory where results will be saved.
+        # Output: None (sets up instance variables and directories)
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
         self.results: List[ExtractionMetrics] = []
 
-    # PyMuPDF extraction
     def extract_with_pymupdf(self, file_path: str) -> Tuple[int, List[pd.DataFrame], float, float]:
+        # Extracts tables from a PDF using PyMuPDF.
+        # Inputs: file_path (str) - path to the PDF file.
+        # Output: tuple(table_count, tables_list, execution_time, memory_used_mb)
         tracemalloc.start()
         start_time = time.time()
         tables = []
@@ -85,8 +90,10 @@ class PDFTableBenchmark:
 
         return table_count, tables, exec_time, memory_mb
 
-    # Camelot extraction
     def extract_with_camelot(self, file_path: str) -> Tuple[int, List[pd.DataFrame], float, float]:
+        # Extracts tables using Camelot library.
+        # Inputs: file_path (str) - path to the PDF file.
+        # Output: tuple(table_count, tables_list, execution_time, memory_used_mb)
         if not CAMELOT_AVAILABLE:
             raise ImportError("Camelot not installed")
         
@@ -109,8 +116,10 @@ class PDFTableBenchmark:
 
         return table_count, tables, exec_time, memory_mb
 
-    # pdfplumber extraction
     def extract_with_pdfplumber(self, file_path: str) -> Tuple[int, List[pd.DataFrame], float, float]:
+        # Extracts tables using pdfplumber.
+        # Inputs: file_path (str) - path to the PDF file.
+        # Output: tuple(table_count, tables_list, execution_time, memory_used_mb)
         if not PDFPLUMBER_AVAILABLE:
             raise ImportError("pdfplumber not installed")
         
@@ -137,9 +146,11 @@ class PDFTableBenchmark:
 
         return len(tables), tables, exec_time, memory_mb
 
-    # Calculate aggregated metrics
     def calculate_metrics(self, library: str, filename: str, table_count: int, 
                          tables: List[pd.DataFrame], exec_time: float, memory_mb: float) -> ExtractionMetrics:
+        # Calculates and returns aggregated metrics for a given extraction run.
+        # Inputs: library name, filename, table_count, tables list, exec_time, memory_mb
+        # Output: ExtractionMetrics dataclass instance with aggregated statistics
         total_cells = 0
         total_rows = 0
         total_cols = 0
@@ -163,8 +174,10 @@ class PDFTableBenchmark:
             memory_used_mb=round(memory_mb, 2)
         )
 
-    # Save extracted tables to CSV
     def save_tables_to_csv(self, tables: List[pd.DataFrame], library: str, filename: str, page_num: int = None):
+        # Saves extracted tables to CSV files per library.
+        # Inputs: tables list, library name, filename, optional page number.
+        # Output: list of saved CSV file paths.
         base_name = os.path.splitext(filename)[0]
         lib_folder = os.path.join(self.output_dir, "extracted_tables", library)
         os.makedirs(lib_folder, exist_ok=True)
@@ -182,8 +195,10 @@ class PDFTableBenchmark:
         
         return saved_files
 
-    # Benchmark a single file across all libraries
     def benchmark_file(self, file_path: str):
+        # Runs table extraction benchmarking for a single PDF file across all libraries.
+        # Inputs: file_path (str) - path to a PDF file.
+        # Output: None (updates self.results list with metrics for each library)
         filename = os.path.basename(file_path)
         print(f"\n{'='*60}")
         print(f"Benchmarking: {filename}")
@@ -207,7 +222,6 @@ class PDFTableBenchmark:
                 metrics = self.calculate_metrics(lib_name, filename, table_count, tables, exec_time, memory_mb)
                 self.results.append(metrics)
                 
-                # Save extracted tables to CSV
                 saved_files = self.save_tables_to_csv(tables, lib_name, filename)
                 print(f"✓ {table_count} tables extracted and saved")
                 
@@ -230,8 +244,10 @@ class PDFTableBenchmark:
                 self.results.append(metrics)
                 print(f"✗ Error: {error_msg[:50]}")
 
-    # Benchmark directory
     def benchmark_directory(self, directory_path: str):
+        # Runs benchmarking for all PDF files in a directory.
+        # Inputs: directory_path (str) - directory containing PDF files.
+        # Output: None (calls benchmark_file for each file)
         pdf_files = [f for f in os.listdir(directory_path) if f.endswith('.pdf')]
         
         if not pdf_files:
@@ -243,16 +259,16 @@ class PDFTableBenchmark:
         for pdf_file in pdf_files:
             self.benchmark_file(os.path.join(directory_path, pdf_file))
 
-    # Generate comparison report
     def generate_report(self):
+        # Generates and prints summary and detailed benchmark reports.
+        # Inputs: None (uses collected self.results data)
+        # Outputs: None (prints and saves CSV + JSON summaries)
         if not self.results:
             print("No results to report")
             return
 
-        # Convert to DataFrame
         df_results = pd.DataFrame([asdict(r) for r in self.results])
         
-        # Summary statistics grouped by library
         print(f"\n{'='*80}")
         print("BENCHMARK SUMMARY - Aggregated by Library")
         print(f"{'='*80}\n")
@@ -268,7 +284,6 @@ class PDFTableBenchmark:
         
         print(summary)
 
-        # Per-file comparison
         print(f"\n{'='*80}")
         print("DETAILED RESULTS - Per File")
         print(f"{'='*80}\n")
@@ -283,12 +298,10 @@ class PDFTableBenchmark:
                                     'execution_time', 'memory_used_mb', 'error']].copy()
             print(display_df.to_string(index=False))
 
-        # Save to CSV
         csv_path = os.path.join(self.output_dir, f"benchmark_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
         df_results.to_csv(csv_path, index=False)
         print(f"\n✅ Results saved to: {csv_path}")
 
-        # Save summary stats
         json_path = os.path.join(self.output_dir, f"benchmark_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
         summary_dict = {
             'timestamp': datetime.now().isoformat(),
@@ -301,7 +314,6 @@ class PDFTableBenchmark:
         print(f"✅ Summary saved to: {json_path}")
 
 
-# Usage
 if __name__ == "__main__":
     path = sys.argv[1] if len(sys.argv) > 1 else "./input-docs"
     
@@ -315,4 +327,4 @@ if __name__ == "__main__":
         print(f"Error: {path} is not a valid PDF file or directory")
         sys.exit(1)
     
-    benchmark.generate_report() 
+    benchmark.generate_report()
