@@ -76,6 +76,7 @@ pandas==2.3.3
 parso==0.8.5
 pathlib==1.0.1
 pdfminer.six==20250506
+pdfplumber==0.11.7
 pillow==11.3.0
 platformdirs==4.5.0
 prompt_toolkit==3.0.52
@@ -97,6 +98,7 @@ pyparsing==3.2.5
 pypdf==3.17.4
 pypdfium2==4.30.0
 python-dateutil==2.9.0.post0
+python-docx==1.2.0
 python-dotenv==1.1.1
 pytz==2025.2
 pywin32==311
