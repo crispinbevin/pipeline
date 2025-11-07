@@ -1,330 +1,346 @@
 import os
-import json
+import re
 import sys
-import time
-import tracemalloc
+import json
 import pandas as pd
-import fitz
+import fitz  # PyMuPDF
+from docx import Document
+from docx.table import _Cell
+from langchain_community.document_loaders import PyMuPDFLoader
+from langchain_community.document_loaders.parsers import RapidOCRBlobParser
 import logging
-from typing import Dict, List, Tuple
-from dataclasses import dataclass, asdict
-from datetime import datetime
-
-# Try importing optional libraries
-try:
-    import camelot
-    CAMELOT_AVAILABLE = True
-except ImportError:
-    CAMELOT_AVAILABLE = False
-
-try:
-    from pdfminer.high_level import extract_text
-    PDFMINER_AVAILABLE = True
-except ImportError:
-    PDFMINER_AVAILABLE = False
-
-try:
-    import pdfplumber
-    PDFPLUMBER_AVAILABLE = True
-except ImportError:
-    PDFPLUMBER_AVAILABLE = False
 
 # Logging setup
 logging.basicConfig(
-    filename='benchmark-errors.log',
+    filename='pre-processing-errors.log',
     level=logging.ERROR,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-@dataclass
-class ExtractionMetrics:
-    library: str
-    filename: str
-    tables_extracted: int
-    total_cells: int
-    avg_rows_per_table: float
-    avg_cols_per_table: float
-    execution_time: float
-    memory_used_mb: float
-    error: str = None
+def clean_text(text):
+    # Cleans raw text by removing extra whitespace, URLs, and line breaks.
+    # Inputs: text (str) – unprocessed string extracted from file.
+    # Output: (str) – cleaned and normalized text.
+    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'http\S+|www\S+', '', text)
+    text = text.replace('\n', ' ').replace('\t', ' ')
+    return text.strip()
 
-class PDFTableBenchmark:
-    def __init__(self, output_dir="./benchmark-results"):
-        # Initializes the benchmark class.
-        # Inputs: output_dir (str) - directory where results will be saved.
-        # Output: None (sets up instance variables and directories)
-        self.output_dir = output_dir
-        os.makedirs(output_dir, exist_ok=True)
-        self.results: List[ExtractionMetrics] = []
+def get_paragraphs_from_docx(docx_path):
+    # Extracts non-empty paragraphs from a DOCX file.
+    # Inputs: docx_path (str) – path to the DOCX file.
+    # Output: (list[str]) – list of paragraph texts.
+    doc = Document(docx_path)
+    paragraphs = []
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if text:
+            paragraphs.append(text)
+    return paragraphs
 
-    def extract_with_pymupdf(self, file_path: str) -> Tuple[int, List[pd.DataFrame], float, float]:
-        # Extracts tables from a PDF using PyMuPDF.
-        # Inputs: file_path (str) - path to the PDF file.
-        # Output: tuple(table_count, tables_list, execution_time, memory_used_mb)
-        tracemalloc.start()
-        start_time = time.time()
-        tables = []
-        table_count = 0
+def get_tables_from_docx(docx_path):
+    # Extracts all tables from a DOCX file as nested lists of cells.
+    # Inputs: docx_path (str) – path to the DOCX file.
+    # Output: (list[list[list[str]]]) – list of tables, where each table is a list of row lists.
+    doc = Document(docx_path)
+    tables = []
+    for table in doc.tables:
+        rows = []
+        for row in table.rows:
+            cells = [cell.text.strip() for cell in row.cells]
+            rows.append(cells)
+        if rows:
+            tables.append(rows)
+    return tables
+
+def process_docx_in_chunks(directory_path, chunk_size=10):
+    # Reads all DOCX files in a directory, chunks text by paragraph count, cleans each chunk, and saves results to JSONL.
+    # Inputs: directory_path (str) – folder path containing DOCX files.
+    #         chunk_size (int) – number of paragraphs per chunk.
+    # Output: (list[dict]) – list of chunk metadata dictionaries with cleaned text.
+    output_file = "../pre-processed-docs.jsonl"
+    all_results = []
+
+    with open(output_file, "a", encoding="utf-8") as f:
+        for filename in os.listdir(directory_path):
+            if not filename.endswith(".docx"):
+                continue
+
+            file_path = os.path.join(directory_path, filename)
+            print(f"Processing (chunked): {filename}")
+
+            try:
+                paragraphs = get_paragraphs_from_docx(file_path)
+                for chunk_idx, start_idx in enumerate(range(0, len(paragraphs), chunk_size)):
+                    end_idx = min(start_idx + chunk_size, len(paragraphs))
+                    chunk_text = ' '.join(paragraphs[start_idx:end_idx])
+                    clean = clean_text(chunk_text)
+
+                    page_data = {
+                        "text": clean,
+                        "metadata": {
+                            "filename": filename,
+                            "chunk_number": chunk_idx + 1,
+                            "paragraph_range": f"{start_idx + 1}-{end_idx}",
+                            "character_count": len(clean)
+                        }
+                    }
+                    f.write(json.dumps(page_data, ensure_ascii=False) + "\n")
+                    all_results.append(page_data)
+
+            except Exception as e:
+                logging.error(f"Failed to process {filename}: {str(e)}")
+                continue
+
+    return all_results
+
+def process_pdf_in_chunks(directory_path, chunk_size=10):
+    # Extracts text from all PDF files in a directory using PyMuPDF, cleaning and saving by page chunk.
+    # Inputs: directory_path (str) – path containing PDF files.
+    #         chunk_size (int) – number of pages per chunk.
+    # Output: (list[dict]) – list of processed page-level JSON entries.
+    output_file = "../pre-processed-docs.jsonl"
+    all_results = []
+
+    with open(output_file, "a", encoding="utf-8") as f:
+        for filename in os.listdir(directory_path):
+            if not filename.endswith(".pdf"):
+                continue
+
+            file_path = os.path.join(directory_path, filename)
+            print(f"Processing (chunked): {filename}")
+
+            try:
+                doc = fitz.open(file_path)
+                total_pages = len(doc)
+                for start_page in range(0, total_pages, chunk_size):
+                    end_page = min(start_page + chunk_size, total_pages)
+                    for page_num in range(start_page, end_page):
+                        page = doc.load_page(page_num)
+                        text = page.get_text("text")
+                        clean = clean_text(text)
+
+                        page_data = {
+                            "text": clean,
+                            "metadata": {
+                                "filename": filename,
+                                "page_number": page_num + 1,
+                                "character_count": len(clean)
+                            }
+                        }
+                        f.write(json.dumps(page_data, ensure_ascii=False) + "\n")
+                        all_results.append(page_data)
+
+                doc.close()
+
+            except Exception as e:
+                logging.error(f"Failed to process {filename}: {str(e)}")
+                continue
+
+    return all_results
+
+def extract_tables_from_docx(directory_path, output_dir="../output-tables"):
+    # Extracts all tables from DOCX files in a directory and saves them as CSV files.
+    # Inputs: directory_path (str) – folder containing DOCX files.
+    #         output_dir (str) – folder where CSVs will be saved.
+    # Output: None (writes extracted tables to disk).
+    os.makedirs(output_dir, exist_ok=True)
+    for filename in os.listdir(directory_path):
+        if not filename.endswith(".docx"):
+            continue
+
+        file_path = os.path.join(directory_path, filename)
+        print(f"Extracting tables (python-docx): {filename}")
+
+        try:
+            tables = get_tables_from_docx(file_path)
+            table_count = 0
+
+            for idx, table_data in enumerate(tables, start=1):
+                try:
+                    df = pd.DataFrame(table_data[1:], columns=table_data[0])
+                    csv_filename = f"{os.path.splitext(filename)[0]}_table{idx}.csv"
+                    csv_path = os.path.join(output_dir, csv_filename)
+                    df.to_csv(csv_path, index=False, encoding="utf-8")
+                    table_count += 1
+                except Exception as e:
+                    logging.error(f"Failed to extract table {idx} from {filename}: {str(e)}")
+                    continue
+
+            if table_count == 0:
+                print(f"No tables found in {filename}")
+            else:
+                print(f"Extracted {table_count} tables from {filename}")
+
+        except Exception as e:
+            logging.error(f"Failed to process {filename}: {str(e)}")
+            continue
+
+def extract_tables_from_pdf(directory_path, output_dir="../output-tables", chunk_size=10):
+    # Extracts tables from PDF files using PyMuPDF page.find_tables() and saves as CSV.
+    # Inputs: directory_path (str) – folder containing PDF files.
+    #         output_dir (str) – folder where CSV files will be saved.
+    #         chunk_size (int) – number of pages processed at a time.
+    # Output: None (writes table CSVs to disk).
+    os.makedirs(output_dir, exist_ok=True)
+    for filename in os.listdir(directory_path):
+        if not filename.endswith(".pdf"):
+            continue
+
+        file_path = os.path.join(directory_path, filename)
+        print(f"Extracting tables (chunked, PyMuPDF only): {filename}")
 
         try:
             doc = fitz.open(file_path)
-            for page_num in range(len(doc)):
-                page = doc.load_page(page_num)
-                page_tables = page.find_tables()
-                
-                if page_tables.tables:
-                    for table in page_tables.tables:
-                        df = pd.DataFrame(table.extract())
-                        tables.append(df)
-                        table_count += 1
-            
+            total_pages = len(doc)
+            table_count = 0
+
+            for start_page in range(0, total_pages, chunk_size):
+                end_page = min(start_page + chunk_size, total_pages)
+                for page_num in range(start_page, end_page):
+                    try:
+                        page = doc.load_page(page_num)
+                        tables = page.find_tables()
+
+                        if tables.tables:
+                            for idx, table in enumerate(tables.tables, start=1):
+                                df = pd.DataFrame(table.extract())
+                                csv_filename = f"{os.path.splitext(filename)[0]}_page{page_num+1}_table{idx}.csv"
+                                csv_path = os.path.join(output_dir, csv_filename)
+                                df.to_csv(csv_path, index=False, encoding="utf-8")
+                                table_count += 1
+                    
+                    except Exception as e:
+                        logging.error(f"Failed to extract tables from {filename} page {page_num+1}: {str(e)}")
+                        continue
+
             doc.close()
-        except Exception as e:
-            logging.error(f"PyMuPDF error on {file_path}: {str(e)}")
-            raise
 
-        exec_time = time.time() - start_time
-        current, peak = tracemalloc.get_traced_memory()
-        memory_mb = peak / 1024 / 1024
-        tracemalloc.stop()
-
-        return table_count, tables, exec_time, memory_mb
-
-    def extract_with_camelot(self, file_path: str) -> Tuple[int, List[pd.DataFrame], float, float]:
-        # Extracts tables using Camelot library.
-        # Inputs: file_path (str) - path to the PDF file.
-        # Output: tuple(table_count, tables_list, execution_time, memory_used_mb)
-        if not CAMELOT_AVAILABLE:
-            raise ImportError("Camelot not installed")
-        
-        tracemalloc.start()
-        start_time = time.time()
-        tables = []
-
-        try:
-            camelot_tables = camelot.read_pdf(file_path, pages='all', flavor='stream')
-            tables = [table.df for table in camelot_tables]
-            table_count = len(camelot_tables)
-        except Exception as e:
-            logging.error(f"Camelot error on {file_path}: {str(e)}")
-            raise
-
-        exec_time = time.time() - start_time
-        current, peak = tracemalloc.get_traced_memory()
-        memory_mb = peak / 1024 / 1024
-        tracemalloc.stop()
-
-        return table_count, tables, exec_time, memory_mb
-
-    def extract_with_pdfplumber(self, file_path: str) -> Tuple[int, List[pd.DataFrame], float, float]:
-        # Extracts tables using pdfplumber.
-        # Inputs: file_path (str) - path to the PDF file.
-        # Output: tuple(table_count, tables_list, execution_time, memory_used_mb)
-        if not PDFPLUMBER_AVAILABLE:
-            raise ImportError("pdfplumber not installed")
-        
-        tracemalloc.start()
-        start_time = time.time()
-        tables = []
-
-        try:
-            with pdfplumber.open(file_path) as pdf:
-                for page in pdf.pages:
-                    page_tables = page.extract_tables()
-                    if page_tables:
-                        for table in page_tables:
-                            df = pd.DataFrame(table)
-                            tables.append(df)
-        except Exception as e:
-            logging.error(f"pdfplumber error on {file_path}: {str(e)}")
-            raise
-
-        exec_time = time.time() - start_time
-        current, peak = tracemalloc.get_traced_memory()
-        memory_mb = peak / 1024 / 1024
-        tracemalloc.stop()
-
-        return len(tables), tables, exec_time, memory_mb
-
-    def calculate_metrics(self, library: str, filename: str, table_count: int, 
-                         tables: List[pd.DataFrame], exec_time: float, memory_mb: float) -> ExtractionMetrics:
-        # Calculates and returns aggregated metrics for a given extraction run.
-        # Inputs: library name, filename, table_count, tables list, exec_time, memory_mb
-        # Output: ExtractionMetrics dataclass instance with aggregated statistics
-        total_cells = 0
-        total_rows = 0
-        total_cols = 0
-
-        for df in tables:
-            total_cells += df.shape[0] * df.shape[1]
-            total_rows += df.shape[0]
-            total_cols += df.shape[1]
-
-        avg_rows = total_rows / table_count if table_count > 0 else 0
-        avg_cols = total_cols / table_count if table_count > 0 else 0
-
-        return ExtractionMetrics(
-            library=library,
-            filename=filename,
-            tables_extracted=table_count,
-            total_cells=total_cells,
-            avg_rows_per_table=round(avg_rows, 2),
-            avg_cols_per_table=round(avg_cols, 2),
-            execution_time=round(exec_time, 4),
-            memory_used_mb=round(memory_mb, 2)
-        )
-
-    def save_tables_to_csv(self, tables: List[pd.DataFrame], library: str, filename: str, page_num: int = None):
-        # Saves extracted tables to CSV files per library.
-        # Inputs: tables list, library name, filename, optional page number.
-        # Output: list of saved CSV file paths.
-        base_name = os.path.splitext(filename)[0]
-        lib_folder = os.path.join(self.output_dir, "extracted_tables", library)
-        os.makedirs(lib_folder, exist_ok=True)
-        
-        saved_files = []
-        for idx, table in enumerate(tables, 1):
-            if page_num is not None:
-                csv_filename = f"{base_name}_{library}_page{page_num}_table{idx}.csv"
+            if table_count == 0:
+                print(f"No tables found in {filename}")
             else:
-                csv_filename = f"{base_name}_{library}_table{idx}.csv"
-            
-            csv_path = os.path.join(lib_folder, csv_filename)
-            table.to_csv(csv_path, index=False, encoding='utf-8')
-            saved_files.append(csv_path)
-        
-        return saved_files
+                print(f"Extracted {table_count} tables from {filename}")
 
-    def benchmark_file(self, file_path: str):
-        # Runs table extraction benchmarking for a single PDF file across all libraries.
-        # Inputs: file_path (str) - path to a PDF file.
-        # Output: None (updates self.results list with metrics for each library)
-        filename = os.path.basename(file_path)
-        print(f"\n{'='*60}")
-        print(f"Benchmarking: {filename}")
-        print(f"{'='*60}")
-
-        libraries = {
-            'PyMuPDF': (self.extract_with_pymupdf, True),
-            'Camelot': (self.extract_with_camelot, CAMELOT_AVAILABLE),
-            'pdfplumber': (self.extract_with_pdfplumber, PDFPLUMBER_AVAILABLE),
-        }
-
-        for lib_name, (extract_func, available) in libraries.items():
-            if not available:
-                print(f"⚠️  {lib_name}: Not installed (skipping)")
-                continue
-
-            try:
-                print(f"🔄 Processing with {lib_name}...", end=' ')
-                table_count, tables, exec_time, memory_mb = extract_func(file_path)
-                
-                metrics = self.calculate_metrics(lib_name, filename, table_count, tables, exec_time, memory_mb)
-                self.results.append(metrics)
-                
-                saved_files = self.save_tables_to_csv(tables, lib_name, filename)
-                print(f"✓ {table_count} tables extracted and saved")
-                
-                if saved_files:
-                    print(f"   └─ Saved to: {os.path.dirname(saved_files[0])}/")
-            except Exception as e:
-                error_msg = str(e)
-                logging.error(f"{lib_name} failed on {filename}: {error_msg}")
-                metrics = ExtractionMetrics(
-                    library=lib_name,
-                    filename=filename,
-                    tables_extracted=0,
-                    total_cells=0,
-                    avg_rows_per_table=0,
-                    avg_cols_per_table=0,
-                    execution_time=0,
-                    memory_used_mb=0,
-                    error=error_msg
-                )
-                self.results.append(metrics)
-                print(f"✗ Error: {error_msg[:50]}")
-
-    def benchmark_directory(self, directory_path: str):
-        # Runs benchmarking for all PDF files in a directory.
-        # Inputs: directory_path (str) - directory containing PDF files.
-        # Output: None (calls benchmark_file for each file)
-        pdf_files = [f for f in os.listdir(directory_path) if f.endswith('.pdf')]
-        
-        if not pdf_files:
-            print(f"No PDF files found in {directory_path}")
-            return
-
-        print(f"Found {len(pdf_files)} PDF file(s)")
-        
-        for pdf_file in pdf_files:
-            self.benchmark_file(os.path.join(directory_path, pdf_file))
-
-    def generate_report(self):
-        # Generates and prints summary and detailed benchmark reports.
-        # Inputs: None (uses collected self.results data)
-        # Outputs: None (prints and saves CSV + JSON summaries)
-        if not self.results:
-            print("No results to report")
-            return
-
-        df_results = pd.DataFrame([asdict(r) for r in self.results])
-        
-        print(f"\n{'='*80}")
-        print("BENCHMARK SUMMARY - Aggregated by Library")
-        print(f"{'='*80}\n")
-        
-        summary = df_results[df_results['error'].isna()].groupby('library').agg({
-            'tables_extracted': ['sum', 'mean'],
-            'total_cells': ['sum', 'mean'],
-            'avg_rows_per_table': 'mean',
-            'avg_cols_per_table': 'mean',
-            'execution_time': ['sum', 'mean'],
-            'memory_used_mb': ['sum', 'mean']
-        }).round(3)
-        
-        print(summary)
-
-        print(f"\n{'='*80}")
-        print("DETAILED RESULTS - Per File")
-        print(f"{'='*80}\n")
-        
-        for filename in df_results['filename'].unique():
-            file_data = df_results[df_results['filename'] == filename]
-            print(f"\n📄 {filename}")
-            print("-" * 80)
-            
-            display_df = file_data[['library', 'tables_extracted', 'total_cells', 
-                                    'avg_rows_per_table', 'avg_cols_per_table', 
-                                    'execution_time', 'memory_used_mb', 'error']].copy()
-            print(display_df.to_string(index=False))
-
-        csv_path = os.path.join(self.output_dir, f"benchmark_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
-        df_results.to_csv(csv_path, index=False)
-        print(f"\n✅ Results saved to: {csv_path}")
-
-        json_path = os.path.join(self.output_dir, f"benchmark_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
-        summary_dict = {
-            'timestamp': datetime.now().isoformat(),
-            'total_files_processed': len(df_results['filename'].unique()),
-            'libraries_tested': df_results['library'].unique().tolist(),
-            'results': [asdict(r) for r in self.results]
-        }
-        with open(json_path, 'w') as f:
-            json.dump(summary_dict, f, indent=2, default=str)
-        print(f"✅ Summary saved to: {json_path}")
+        except Exception as e:
+            logging.error(f"Failed to open/process {filename}: {str(e)}")
+            continue
 
 
 if __name__ == "__main__":
+    # Main execution: determines input path and processes accordingly.
+    # Inputs: command-line argument (optional path to file or directory).
+    # Output: Writes pre-processed text JSONL and table CSVs.
     path = sys.argv[1] if len(sys.argv) > 1 else "./input-docs"
     
-    benchmark = PDFTableBenchmark()
+    if os.path.isfile(path):
+        filename = os.path.basename(path)
+        output_file = "../pre-processed-docs.jsonl"
+        results = []
+        
+        if filename.endswith(".pdf"):
+            print(f"Processing (chunked): {filename}")
+            try:
+                doc = fitz.open(path)
+                total_pages = len(doc)
+                with open(output_file, "w", encoding="utf-8") as f:
+                    for page_num in range(total_pages):
+                        page = doc.load_page(page_num)
+                        text = page.get_text("text")
+                        clean = clean_text(text)
+                        page_data = {
+                            "text": clean,
+                            "metadata": {
+                                "filename": filename,
+                                "page_number": page_num + 1,
+                                "character_count": len(clean)
+                            }
+                        }
+                        f.write(json.dumps(page_data, ensure_ascii=False) + "\n")
+                        results.append(page_data)
+                doc.close()
+
+                print(f"Extracting tables (PyMuPDF only): {filename}")
+                doc = fitz.open(path)
+                table_count = 0
+                output_dir = "../output-tables"
+                os.makedirs(output_dir, exist_ok=True)
+                for page_num in range(len(doc)):
+                    try:
+                        page = doc.load_page(page_num)
+                        tables = page.find_tables()
+                        if tables.tables:
+                            for idx, table in enumerate(tables.tables, start=1):
+                                df = pd.DataFrame(table.extract())
+                                csv_filename = f"{os.path.splitext(filename)[0]}_page{page_num+1}_table{idx}.csv"
+                                csv_path = os.path.join(output_dir, csv_filename)
+                                df.to_csv(csv_path, index=False, encoding="utf-8")
+                                table_count += 1
+                    except Exception as e:
+                        logging.error(f"Failed to extract tables from {filename} page {page_num+1}: {str(e)}")
+                        continue
+                doc.close()
+                if table_count == 0:
+                    print(f"No tables found in {filename}")
+                else:
+                    print(f"Extracted {table_count} tables from {filename}")
+            except Exception as e:
+                logging.error(f"Failed to process {filename}: {str(e)}")
+
+        elif filename.endswith(".docx"):
+            print(f"Processing (chunked): {filename}")
+            try:
+                paragraphs = get_paragraphs_from_docx(path)
+                chunk_size = 10
+                with open(output_file, "w", encoding="utf-8") as f:
+                    for chunk_idx, start_idx in enumerate(range(0, len(paragraphs), chunk_size)):
+                        end_idx = min(start_idx + chunk_size, len(paragraphs))
+                        chunk_text = ' '.join(paragraphs[start_idx:end_idx])
+                        clean = clean_text(chunk_text)
+                        page_data = {
+                            "text": clean,
+                            "metadata": {
+                                "filename": filename,
+                                "chunk_number": chunk_idx + 1,
+                                "paragraph_range": f"{start_idx + 1}-{end_idx}",
+                                "character_count": len(clean)
+                            }
+                        }
+                        f.write(json.dumps(page_data, ensure_ascii=False) + "\n")
+                        results.append(page_data)
+
+                print(f"Extracting tables (python-docx): {filename}")
+                tables = get_tables_from_docx(path)
+                table_count = 0
+                output_dir = "../output-tables"
+                os.makedirs(output_dir, exist_ok=True)
+                for idx, table_data in enumerate(tables, start=1):
+                    try:
+                        df = pd.DataFrame(table_data[1:], columns=table_data[0])
+                        csv_filename = f"{os.path.splitext(filename)[0]}_table{idx}.csv"
+                        csv_path = os.path.join(output_dir, csv_filename)
+                        df.to_csv(csv_path, index=False, encoding="utf-8")
+                        table_count += 1
+                    except Exception as e:
+                        logging.error(f"Failed to extract table {idx} from {filename}: {str(e)}")
+                        continue
+                if table_count == 0:
+                    print(f"No tables found in {filename}")
+                else:
+                    print(f"Extracted {table_count} tables from {filename}")
+            except Exception as e:
+                logging.error(f"Failed to process {filename}: {str(e)}")
+        else:
+            print(f"Error: {filename} is not a PDF or DOCX file")
     
-    if os.path.isfile(path) and path.endswith('.pdf'):
-        benchmark.benchmark_file(path)
     elif os.path.isdir(path):
-        benchmark.benchmark_directory(path)
+        output_file = "../pre-processed-docs.jsonl"
+        with open(output_file, "w", encoding="utf-8") as f:
+            pass
+        pdf_results = process_pdf_in_chunks(path, chunk_size=10)
+        docx_results = process_docx_in_chunks(path, chunk_size=10)
+        extract_tables_from_pdf(path, chunk_size=10)
+        extract_tables_from_docx(path)
+        print(f"Processed {len(pdf_results) + len(docx_results)} documents in total.")
     else:
-        print(f"Error: {path} is not a valid PDF file or directory")
+        print(f"Error: {path} is neither a file nor a directory")
         sys.exit(1)
-    
-    benchmark.generate_report()

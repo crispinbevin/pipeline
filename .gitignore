@@ -22,10 +22,13 @@ Thumbs.db
 # Sensitive configuration files (example)
 .env
 
-venv/
-tables/
-
 *.pdf
 *.jsonl
 *.json
 *.csv
+
+#generated files
+venv/
+tables/
+fine_tuned_embeddings/
+checkpoints/
